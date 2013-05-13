@@ -561,7 +561,7 @@
 	    	
 	    	$this->m_xmlParser = null;
 	    	$this->m_xmlTag = null;
-	    	
+	    
 	    	try
 	    	{
 		    	//intialising the curl for XML parsing
@@ -607,6 +607,7 @@
 				$header = curl_getinfo($cURL);//test
 				curl_close($cURL);
 				
+
 				$this->m_szLastResponse = $szString;
 				
 				$szString = str_replace("<soap:Body>", '" "', $szString);

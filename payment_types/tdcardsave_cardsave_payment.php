@@ -367,7 +367,7 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                 $transaction_processed = $card_details_transaction->processTransaction(
                     $gateway_output, $transaction_output_message
                 ); 
-                
+
                 if ($transaction_processed == false) {
                     throw new Exception('Unable to communicate with payment gateway');
                 } else {

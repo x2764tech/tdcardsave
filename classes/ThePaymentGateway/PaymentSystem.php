@@ -42,7 +42,9 @@
 	 	{
 	 		if ($this->m_boHasValue == false)
 			{
-				throw new Exception("Object has no value");
+				$tmp = array_map(function($element) { return implode($element);}, debug_backtrace());
+				traceLog(implode('\r\n\t', $tmp));
+				throw new Exception("Object has no value".$help_text);
 			}
 			return ($this->m_crValue);
 	 	}
@@ -2249,7 +2251,8 @@
 	        
 	        $tomTransactionOutputMessage = null;
 
-			if (!$sxXmlDocument->TransactionOutputData)
+
+	   	if (!$sxXmlDocument->TransactionOutputData)
 			{
 				return (null);
 			}
@@ -2268,7 +2271,7 @@
 
 			if ($sxXmlDocument->TransactionOutputData->AuthCode)
 			{
-				$szAuthCode = current($sxXmlDocument->TransactionOutputData->AuthCode[0]);
+				$szAuthCode = current($sxXmlDocument->TransactionOutputData->AuthCode);
 			}
 			else
 			{
@@ -2277,7 +2280,7 @@
 
 			if ($sxXmlDocument->TransactionOutputData->AddressNumericCheckResult)
 			{
-				$crAddressNumericCheckResult = new NullableCHECK_RESULT(current($sxXmlDocument->TransactionOutputData->AddressNumericCheckResult[0]));
+				$crAddressNumericCheckResult = new NullableCHECK_RESULT(current($sxXmlDocument->TransactionOutputData->AddressNumericCheckResult));
 			}
 			else
 			{
@@ -2286,7 +2289,7 @@
 			
 			if ($sxXmlDocument->TransactionOutputData->PostCodeCheckResult)
 			{
-		    	$crPostCodeCheckResult = new NullableCHECK_RESULT(current($sxXmlDocument->TransactionOutputData->PostCodeCheckResult[0]));
+		    	$crPostCodeCheckResult = new NullableCHECK_RESULT(current($sxXmlDocument->TransactionOutputData->PostCodeCheckResult));
 			}
 			else 
 			{
@@ -2304,7 +2307,7 @@
 
 			if ($sxXmlDocument->TransactionOutputData->CV2CheckResult)
 			{
-		    	$crCV2CheckResult = new NullableCHECK_RESULT(current($sxXmlDocument->TransactionOutputData->CV2CheckResult[0]));
+		    	$crCV2CheckResult = new NullableCHECK_RESULT(current($sxXmlDocument->TransactionOutputData->CV2CheckResult));
 			}
 			else 
 			{
