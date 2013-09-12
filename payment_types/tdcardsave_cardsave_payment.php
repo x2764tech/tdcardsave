@@ -246,8 +246,10 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
             * Prepare and send request to the payment gateway, and parse the server response
             */
             if (!$validation->validate($data)) {
+                traceLog( "Payment Validation failed" );
                 $validation->throwException();
             } else {
+                traceLog("Processing payment for ".$validation->fieldValues['CardName'] );
                 require_once(PATH_APP.'/modules/tdcardsave/classes/ThePaymentGateway/PaymentSystem.php');
                 /**
                  * Get list of entry points
@@ -256,6 +258,7 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                 $gateway_entry_points->add('https://gw1.cardsaveonlinepayments.com:4430', 100, 2);
                 $gateway_entry_points->add('https://gw2.cardsaveonlinepayments.com:4430', 200, 2);
                 $gateway_entry_points->add('https://gw3.cardsaveonlinepayments.com:4430', 300, 2);
+
                 /**
                  * Save login details
                  */
@@ -289,9 +292,18 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                 /**
                  * Transaction Control
                  */
-                $transaction_control = new TransactionControl($echo_card_type, 
-                    $echo_avs_check_result, $echo_cv2_check_result, $echo_amount_received,
-                    $duplicate_delay, '', '', $three_d_secure_override_policy, '', null, null
+                $transaction_control = new TransactionControl(
+                    $echo_card_type, 
+                    $echo_avs_check_result, 
+                    $echo_cv2_check_result, 
+                    $echo_amount_received,
+                    $duplicate_delay, 
+                    '', 
+                    '', 
+                    $three_d_secure_override_policy, 
+                    '', 
+                    null, 
+                    null
                 );
                 
                 /**
@@ -341,9 +353,21 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                     $billing_state_code = '';
                 }
 
-                $billing_address = new AddressDetails($order->billing_street_addr,
-                    '', $order->billing_company, '', $order->billing_city,
-                    $billing_state_code, $order->billing_zip, $country_code
+                $address = preg_split("/[\r\n]+/", $order->billing_street_addr );
+                $address_length = count($address);
+                $address1 = $address_length > 0 ? $address[0] : '';
+                $address2 = $address_length > 1 ? $address[1] : '';
+                $address3 = $address_length > 2 ? $address[2] : '';
+                $address4 = $address_length > 3 ? $address[3] : '';
+                $billing_address = new AddressDetails(
+                    $address1,
+                    $address2, 
+                    $address3, 
+                    $address4, 
+                    $order->billing_city,
+                    $billing_state_code, 
+                    $order->billing_zip, 
+                    $country_code
                 );
                 
                 /**
@@ -368,35 +392,48 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                     $gateway_output, $transaction_output_message
                 ); 
 
+                traceLog("Payment Transaction result for ".$validation->fieldValues['CardName']."was $transaction_processed");
+                
                 if ($transaction_processed == false) {
                     throw new Exception('Unable to communicate with payment gateway');
                 } else {
                     $response_message = $gateway_output->getMessage();
                     $response_code = $gateway_output->getStatusCode();
                     
+                    traceLog("Payment result for ".$validation->fieldValues['CardName']." was $response_code $response_message");
                     switch ($response_code)
                     {
                         case 0: // Success
                             /* Log successfuly payment */
                             
-                            $response_data = array(
-                                'Auth Code' => $transaction_output_message->getAuthCode(),
-                                'Address Numeric Check Result' => $transaction_output_message->getAddressNumericCheckResult()->getValue(),
-                                'Postcode Check Result' => $transaction_output_message->getPostCodeCheckResult()->getValue(),
-                                'CV2 Result' => $transaction_output_message->getCV2CheckResult()->getValue(),
-                                'Card Issuer' => $transaction_output_message->getCardTypeData()->getIssuer()->getValue(),
-                                'Card Type' => $transaction_output_message->getCardTypeData()->getCardType(),
-                            );
- 
+
+                            $response_data = array();
+                            $response_data['Auth Code'] = $transaction_output_message->getAuthCode();
+                            if( $transaction_output_message->getAddressNumericCheckResult() ) {
+                                $response_data['Address Numeric Check Result'] = $transaction_output_message->getAddressNumericCheckResult()->getValue();
+                            }
+                            if( $transaction_output_message->getPostCodeCheckResult() ) {
+                                $response_data['Postcode Check Result'] =  $transaction_output_message->getPostCodeCheckResult()->getValue();
+                            }
+                            if( $transaction_output_message->getCV2CheckResult() ) {
+                                $response_data['CV2 Result'] = $transaction_output_message->getCV2CheckResult()->getValue();
+                            }
+                            if( $transaction_output_message->getCardTypeData() ) {
+                                if($transaction_output_message->getCardTypeData()->getIssuer()) {
+                                    $response_data['Card Issuer'] = $transaction_output_message->getCardTypeData()->getIssuer()->getValue();
+                                }
+                                $response_data['Card Type'] = $transaction_output_message->getCardTypeData()->getCardType();    
+                            }
+                            
                             $this->log_payment_attempt(
                                 $order,
                                 'Successful payment',
                                 1, 
                                 $this->prepare_fields_log($data),
                                 $response_data,
-                                $response_message,
+                                var_export($gateway_output, true),
                                 $response_data['CV2 Result'],
-                                '',
+                                null,
                                 $response_data['Address Numeric Check Result']
                             );         
                                                  
@@ -424,8 +461,9 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                             $message = $response_message;
                             if ($gateway_output->getErrorMessages()->getCount() > 0) {
                                 for ($i=0; $i<$gateway_output->getErrorMessages()->getCount(); $i++) {
-                                    $message .= "$message ".$gateway_output->getErrorMessages()->getAt($i)."n";
+                                    $message .= " ".$gateway_output->getErrorMessages()->getAt($i)."\n";
                                 }
+                                traceLog("Payment failed $message");
                             }
                             throw new Exception("Error: $message");
                         break;
