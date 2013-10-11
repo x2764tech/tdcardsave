@@ -6,9 +6,49 @@
  * Follow us @twindots
  * twindots.co.uk
  */
- 
+
+use TDCardSave\PaymentProcessor;
+
 class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
 {
+    /**
+     * @return Phpr_Validation
+     */
+    protected static function _createValidation()
+    {
+        /*
+                * Validate input data
+                */
+        $validation = new Phpr_Validation();
+
+        $validation->add('CardName', 'Card Holder Name')->fn('trim')->
+            required('Please enter the name as it appears on the card');
+
+        $validation->add('CardNumber', 'Credit Card Number')->fn('trim')->
+            required('Please enter a credit card number')->regexp('/^[0-9]*$/', 'Credit card number can only contain digits');
+
+        $validation->add('CV2', 'CV2')->fn('trim')->required('Please enter the card\'s security code')->
+            regexp('/^[0-9]*$/', 'Card security code must contain only digits');
+
+        $validation->add('StartMonth', 'Start month')->fn('trim')->
+            regexp('/^[0-9]*$/', 'Credit card start month can contain only digits.');
+
+        $validation->add('StartYear', 'Start year')->fn('trim')->
+            regexp('/^[0-9]*$/', 'Credit card start year can contain only digits.');
+
+        $validation->add('ExpMonth', 'Expiration month')->fn('trim')->
+            required('Please specify a card expiration month.')->
+            regexp('/^[0-9]*$/', 'Credit card expiration month can contain only digits.');
+
+        $validation->add('ExpYear', 'Expiration year')->fn('trim')->
+            required('Please specify a card expiration year.')->
+            regexp('/^[0-9]*$/', 'Credit card expiration year can contain only digits.');
+
+        $validation->add('IssueNumber', 'Issue Number')->fn('trim')->
+            regexp('/^[0-9]*$/', 'Issue number must contain only digits');
+        return $validation;
+    }
+
     /**
      * Payment method information
      * 
@@ -208,281 +248,155 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
      */
     public function process_payment_form($data, $host_obj, $order, $back_end = false)
     {
-        /*
-        * Validate input data
-        */
-        $validation = new Phpr_Validation();
-        
-        $validation->add('CardName', 'Card Holder Name')->fn('trim')->
-            required('Please enter the name as it appears on the card');
-        
-        $validation->add('CardNumber', 'Credit Card Number')->fn('trim')->
-            required('Please enter a credit card number')->regexp('/^[0-9]*$/','Credit card number can only contain digits');
-        
-        $validation->add('CV2', 'CV2')->fn('trim')->required('Please enter the card\'s security code')->
-            regexp('/^[0-9]*$/', 'Card security code must contain only digits');
-        
-        $validation->add('StartMonth', 'Start month')->fn('trim')->
-            regexp('/^[0-9]*$/', 'Credit card start month can contain only digits.');
-        
-        $validation->add('StartYear', 'Start year')->fn('trim')->
-            regexp('/^[0-9]*$/', 'Credit card start year can contain only digits.');
-        
-        $validation->add('ExpMonth', 'Expiration month')->fn('trim')->
-            required('Please specify a card expiration month.')->
-            regexp('/^[0-9]*$/', 'Credit card expiration month can contain only digits.');
-        
-        $validation->add('ExpYear', 'Expiration year')->fn('trim')->
-            required('Please specify a card expiration year.')->
-            regexp('/^[0-9]*$/', 'Credit card expiration year can contain only digits.');
- 
-        $validation->add('IssueNumber', 'Issue Number')->fn('trim')->
-            regexp('/^[0-9]*$/', 'Issue number must contain only digits');
-        
-        
+
+        $response_data = array();
+
         try
         {
+            $validation = self::_createValidation();
             /*
             * Prepare and send request to the payment gateway, and parse the server response
             */
             if (!$validation->validate($data)) {
                 traceLog( "Payment Validation failed" );
                 $validation->throwException();
-            } else {
-                traceLog("Processing payment for ".$validation->fieldValues['CardName'] );
-                require_once(PATH_APP.'/modules/tdcardsave/classes/ThePaymentGateway/PaymentSystem.php');
-                /**
-                 * Get list of entry points
-                 */
-                $gateway_entry_points = new RequestGatewayEntryPointList;
-                $gateway_entry_points->add('https://gw1.cardsaveonlinepayments.com:4430', 100, 2);
-                $gateway_entry_points->add('https://gw2.cardsaveonlinepayments.com:4430', 200, 2);
-                $gateway_entry_points->add('https://gw3.cardsaveonlinepayments.com:4430', 300, 2);
-
-                /**
-                 * Save login details
-                 */
-                $merchant_credentials = new MerchantDetails($host_obj->merchant_id,$host_obj->password);
-                
-                /**
-                 * Define transaction type
-                 */
-                $transaction_type = (string)$host_obj->transaction_type;
-                $transaction_type = new NullableTRANSACTION_TYPE(TRANSACTION_TYPE::SALE);
-                $message_details = new MessageDetails($transaction_type);
-                
-                /**
-                 * Options for response
-                 */
-                $echo_card_type = new NullableBool(true);
-                $echo_amount_received = new NullableBool(true);
-                $echo_avs_check_result = new NullableBool(true);
-                $echo_cv2_check_result = new NullableBool(true);
-                
-                /**
-                 * 3D Secure To be implemented
-                 */
-                $three_d_secure_override_policy = new NullableBool(false);
-                
-                /**
-                 * Time Options
-                 */
-                $duplicate_delay = new NullableInt(20);
-                
-                /**
-                 * Transaction Control
-                 */
-                $transaction_control = new TransactionControl(
-                    $echo_card_type, 
-                    $echo_avs_check_result, 
-                    $echo_cv2_check_result, 
-                    $echo_amount_received,
-                    $duplicate_delay, 
-                    '', 
-                    '', 
-                    $three_d_secure_override_policy, 
-                    '', 
-                    null, 
-                    null
-                );
-                
-                /**
-                 * Create transaction details
-                 */
-                $amount = new NullableInt($order->total * 100);
-                
-                $currency = Shop_CurrencySettings::get();
-                $currency_code = new NullableInt($currency->iso_4217_code);
-                
-                $device_category = new NullableInt(0); // 3D secure device category is computer
-                $three_d_secure_browser_details = new ThreeDSecureBrowserDetails(
-                    $device_category, '*/*', $_SERVER['HTTP_USER_AGENT']
-                );
-                
-                $transaction_details = new TransactionDetails($message_details,
-                    $amount, $currency_code, $order->id, 'Web Order', $transaction_control,
-                    $three_d_secure_browser_details
-                );
-                
-                /**
-                 * Card Details
-                 */
-                $card_expiry_month = new NullableInt($validation->fieldValues['ExpMonth']);
-                $card_expiry_year = new NullableInt($validation->fieldValues['ExpYear']);
-                $card_expiry_date = new CreditCardDate($card_expiry_month, $card_expiry_year);
-                
-                $card_start_month = new NullableInt($validation->fieldValues['StartMonth']);
-                $card_start_year = new NullableInt($validation->fieldValues['StartYear']);
-                $card_start_date = new CreditCardDate($card_start_month,$card_start_year);
-                
-                $card_details = new CardDetails(
-                    $validation->fieldValues['CardName'], $validation->fieldValues['CardNumber'],
-                    $card_expiry_date, $card_start_date, $validation->fieldValues['IssueNumber'],
-                    $validation->fieldValues['CV2']
-                );              
-                
-                /**
-                 * Billing Address Information
-                 */
-                $country_code = new NullableInt($order->billing_country->code_iso_numeric);
-
-                // Added a check in here to see if the state is set as LemonStand doesn't have states for all countries
-                if ( isset($order->billing_state->code) ) {
-                    $billing_state_code = $order->billing_state->code;
-                } else {
-                    $billing_state_code = '';
-                }
-
-                $address = preg_split("/[\r\n]+/", $order->billing_street_addr );
-                $address_length = count($address);
-                $address1 = $address_length > 0 ? $address[0] : '';
-                $address2 = $address_length > 1 ? $address[1] : '';
-                $address3 = $address_length > 2 ? $address[2] : '';
-                $address4 = $address_length > 3 ? $address[3] : '';
-                $billing_address = new AddressDetails(
-                    $address1,
-                    $address2, 
-                    $address3, 
-                    $address4, 
-                    $order->billing_city,
-                    $billing_state_code, 
-                    $order->billing_zip, 
-                    $country_code
-                );
-                
-                /**
-                 * Customer Details
-                 */
-                $customer_details = new CustomerDetails($billing_address, $order->billing_email,
-                    $order->billing_phone, Phpr::$request->getUserIp()
-                );
-                
-                /**
-                 * The transaction
-                 */
-                $card_details_transaction = new CardDetailsTransaction(
-                    $gateway_entry_points, 1, null, $merchant_credentials,
-                    $transaction_details, $card_details, $customer_details, ''
-                );
-                
-                /**
-                 *  Process the transaction 
-                 */
-                $transaction_processed = $card_details_transaction->processTransaction(
-                    $gateway_output, $transaction_output_message
-                ); 
-
-                traceLog("Payment Transaction result for ".$validation->fieldValues['CardName']."was $transaction_processed");
-                
-                if ($transaction_processed == false) {
-                    throw new Exception('Unable to communicate with payment gateway');
-                } else {
-                    $response_message = $gateway_output->getMessage();
-                    $response_code = $gateway_output->getStatusCode();
-                    
-                    traceLog("Payment result for ".$validation->fieldValues['CardName']." was $response_code $response_message");
-                    switch ($response_code)
-                    {
-                        case 0: // Success
-                            /* Log successfuly payment */
-                            
-
-                            $response_data = array();
-                            $response_data['Auth Code'] = $transaction_output_message->getAuthCode();
-                            if( $transaction_output_message->getAddressNumericCheckResult() ) {
-                                $response_data['Address Numeric Check Result'] = $transaction_output_message->getAddressNumericCheckResult()->getValue();
-                            }
-                            if( $transaction_output_message->getPostCodeCheckResult() ) {
-                                $response_data['Postcode Check Result'] =  $transaction_output_message->getPostCodeCheckResult()->getValue();
-                            }
-                            if( $transaction_output_message->getCV2CheckResult() ) {
-                                $response_data['CV2 Result'] = $transaction_output_message->getCV2CheckResult()->getValue();
-                            }
-                            if( $transaction_output_message->getCardTypeData() ) {
-                                if($transaction_output_message->getCardTypeData()->getIssuer()) {
-                                    $response_data['Card Issuer'] = $transaction_output_message->getCardTypeData()->getIssuer()->getValue();
-                                }
-                                $response_data['Card Type'] = $transaction_output_message->getCardTypeData()->getCardType();    
-                            }
-                            
-                            $this->log_payment_attempt(
-                                $order,
-                                'Successful payment',
-                                1, 
-                                $this->prepare_fields_log($data),
-                                $response_data,
-                                var_export($gateway_output, true),
-                                $response_data['CV2 Result'],
-                                null,
-                                $response_data['Address Numeric Check Result']
-                            );         
-                                                 
-                            /* Update order status */
-                            Shop_OrderStatusLog::create_record($host_obj->order_status,
-                                $order
-                            );                   
-                            
-                            /* Mark as processed */
-                            $order->set_payment_processed();       
-                        break;
-                        case 3: // 3D Secure required and not implemented
-                            throw new Exception('Credit Card requires 3D secure but it has not been implemented');
-                        break;
-                        case 4: // Referred 
-                            throw new Exception('Transaction referred');
-                        break;
-                        case 5: // Declined
-                            throw new Exception("Credit card payment declined: $response_message");
-                        break;
-                        case 20: // Duplicate transaction (prevents double payments)
-                            throw new Exception("Duplicate transaction: $response_message");
-                        break;
-                        case 30: // Error occured
-                            $message = $response_message;
-                            if ($gateway_output->getErrorMessages()->getCount() > 0) {
-                                for ($i=0; $i<$gateway_output->getErrorMessages()->getCount(); $i++) {
-                                    $message .= " ".$gateway_output->getErrorMessages()->getAt($i)."\n";
-                                }
-                                traceLog("Payment failed $message");
-                            }
-                            throw new Exception("Error: $message");
-                        break;
-                        default: // Unknown error code so we just create a generic message
-                            throw new Exception("Unknown Error Response Code: $response_code");                            
-                        break;                            
-                    }
-                }                
             }
+
+
+
+            traceLog("Processing payment for ".$validation->fieldValues['CardName'] );
+
+            require_once(PATH_APP . '/modules/tdcardsave/classes/XmlPaymentGateway/TDCardSave/PaymentProcessor.php');
+
+            $currency = Shop_CurrencySettings::get();
+            $currency_code = $currency->iso_4217_code;
+
+            $processor = new PaymentProcessor($host_obj->merchant_id, $host_obj->password);
+
+            $processor->orderId = $order->id;
+            $processor->amountInPence = $order->total * 100;
+
+
+            $processor->currencyCode = $currency_code;
+
+
+            $processor->cardName = $validation->fieldValues['CardName'];
+            $processor->cardNumber = $validation->fieldValues['CardNumber'];
+            $processor->expiryMonth = $validation->fieldValues['ExpMonth'];
+            $processor->expiryYear = $validation->fieldValues['ExpYear'];
+            $processor->startMonth = $validation->fieldValues['StartMonth'];
+            $processor->startYear = $validation->fieldValues['StartYear'];
+            $processor->cv2 = $validation->fieldValues['CV2'];
+            $processor->issueNumber = $validation->fieldValues['IssueNumber'];
+
+            $processor->countryCode = $order->billing_country->code_iso_numeric;
+            $address = preg_split("/[\r\n]+/", $order->billing_street_addr );
+            $address_length = count($address);
+            $processor->address1 =  $address_length > 0 ? $address[0] : '';;
+            $processor->address2 =  $address_length > 1 ? $address[1] : '';
+            $processor->address3 = $address_length > 2 ? $address[2] : '';
+            $processor->address4 = $address_length > 3 ? $address[3] : '';
+            $processor->city = $order->billing_city;
+            if(isset($order->billing_state->code))
+                $processor->state = $order->billing_state->code;
+            $processor->postcode = $order->billing_zip;
+            $processor->country = $order->billing_country->name;
+            $processor->emailAddress = $order->billing_email;
+            $processor->phoneNumber = $order->billing_phone;
+
+            $processor->ipAddress = Phpr::$request->getUserIp();
+
+
+            $payment_result = $processor->processPayment();
+
+            traceLog("Payment Transaction XML Request was ".$processor->requestXml);
+
+            $response_data = array();
+            $response_data['Auth Code'] = $payment_result->getAuthCode();
+            $response_data['Address Numeric Check Result'] = $payment_result->addressNumericCheckResult;
+            $response_data['Postcode Check Result'] =  $payment_result->postCodeCheckResult;
+            $response_data['CV2 Result'] = $payment_result->cv2CheckResult;
+            $response_data['3D Secure Result'] = $payment_result->threeDSecureAuthenticationCheckResult;
+
+            traceLog("Payment Transaction result for ".$validation->fieldValues['CardName']." was ".$payment_result->xmlString);
+
+            if (!isset($payment_result) || $payment_result == null) {
+                throw new Exception('Unable to communicate with payment gateway');
+            } else {
+                $response_message = $payment_result->message;
+                $response_code = $payment_result->statusCode;
+
+                traceLog("Payment result for ".$validation->fieldValues['CardName']." was $response_code $response_message");
+
+                if($payment_result->paymentWasSuccessful()) {
+                    $this->log_payment_attempt(
+                        $order,
+                        'Successful payment',
+                        1,
+                        $this->prepare_fields_log($data),
+                        $response_data,
+                        $payment_result->xmlString,
+                        $response_data['CV2 Result'],
+                        null,
+                        $response_data['Address Numeric Check Result']
+                    );
+
+                    /* Update order status */
+                    Shop_OrderStatusLog::create_record($host_obj->order_status,
+                        $order
+                    );
+
+                    /* Mark as processed */
+                    $order->set_payment_processed();
+                } elseif ($payment_result->requires3DSecure()) {
+                    throw new Exception('Credit Card requires 3D secure but it has not been implemented');
+                } elseif ($payment_result->transactionReferred()) {
+                    throw new Exception('Transaction referred');
+                } elseif ($payment_result->paymentDeclined()) {
+                    throw new Exception("Credit card payment declined: $response_message");
+                } elseif($payment_result->isDuplicate()) {
+                    if($payment_result->previousTransactionWasSuccess()) {
+                        $this->log_payment_attempt(
+                            $order,
+                            'Successful (Duplicate) payment',
+                            1,
+                            $this->prepare_fields_log($data),
+                            $this->prepare_response_log($response_data),
+                            $payment_result->xmlString
+                        );
+
+                        /* Update order status */
+                        Shop_OrderStatusLog::create_record($host_obj->order_status,$order);
+
+                        /* Mark as processed */
+                        $order->set_payment_processed();
+                    } else {
+                        throw new Exception("Duplicate Transaction was not successful - ".$payment_result->previousTransactionMessage);
+                    }
+                } else {
+                    throw new Exception("Unknown Error processing transaction");
+                }
+            }
+
         }
         catch (Exception $ex)
         {
             /*
             * Log invalid payment attempt
             */
-            if ( !isset($data) )
-                $data = array();
+            $data = $data ?: array();
+            $response_data = $response_data ?: array();
+            $response_text = isset($payment_result) ? $payment_result->xmlString : null;
+
             
-            $this->log_payment_attempt($order, $ex->getMessage(), 0, $this->prepare_fields_log($data), array(), null);
+            $this->log_payment_attempt(
+                $order,
+                $ex->getMessage(),
+                0,
+                $this->prepare_fields_log($data),
+                $this->prepare_response_log($response_data),
+                $response_text
+            );
             
             if (!$back_end)
                 throw new Phpr_ApplicationException('Payment Declined');

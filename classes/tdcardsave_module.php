@@ -10,6 +10,6 @@ class Tdcardsave_Module extends Core_ModuleBase
         return new Core_ModuleInfo(
             "Cardsave direct payment module",
             "Cardsave direct payment method",
-            "Twin Dots" );
+            "x2764tech Limited" );
     }
 }
