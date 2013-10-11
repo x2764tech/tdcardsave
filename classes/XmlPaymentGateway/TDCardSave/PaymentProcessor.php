@@ -138,22 +138,40 @@ xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
 
     function processPayment()
     {
+        return $this->_sendRequest(
+            $this->CreatePaymentXml(),
+            array(
+                'SOAPAction:https://www.thepaymentgateway.net/CardDetailsTransaction',
+                'Content-Type: text/xml; charset = utf-8',
+                'Connection: close'
+            ));
+    }
 
-        $this->requestXml = $this->CreatePaymentXml();
+    public function process3DSecureResult($paRes, $md)
+    {
+        return $this->_sendRequest(
+            $this->CreateThreeSecureAuthenticationXml($paRes, $md),
+            array(
+                'SOAPAction:https://www.thepaymentgateway.net/ThreeDSecureAuthentication',
+                'Content-Type: text/xml; charset = utf-8',
+                'Connection: close'
+            )
+        );
+    }
+
+    protected function _sendRequest($xml, $headers)
+    {
+        $this->requestXml = $xml;
         $gwId = 1;
         $domain = "cardsaveonlinepayments.com";
         $port = "4430";
         $transactionAttempt = 1;
-        $soapSuccess = false;
+
         //XML Headers used in cURL - remember to change the function after thepaymentgateway.net in SOAPAction when changing the XML to call a different function
-        $headers = array(
-            'SOAPAction:https://www.thepaymentgateway.net/CardDetailsTransaction',
-            'Content-Type: text/xml; charset = utf-8',
-            'Connection: close'
-        );
+
 
         //It will attempt each of the gateway servers (gw1, gw2 & gw3) 3 times each before totally failing
-        while (!$soapSuccess && $gwId <= 3 && $transactionAttempt <= 3) {
+        while ($gwId <= 3 && $transactionAttempt <= 3) {
 
             //builds the URL to post to (rather than it being hard coded - means we can loop through all 3 gateway servers)
             $url = 'https://gw' . $gwId . '.' . $domain . ':' . $port . '/';
@@ -188,13 +206,13 @@ xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
                 //Get the status code
                 $paymentResponse = new PaymentResponse($ret);
 
-                if($paymentResponse->wasSuccessful)
+                if ($paymentResponse->wasSuccessful)
                     return $paymentResponse;
             }
 
             //increment the transaction attempt if <=2
             if ($transactionAttempt <= 2) {
-                $transactionAttempt+=1;
+                $transactionAttempt += 1;
             } else {
                 //reset transaction attempt to 1 & increment $gwID
                 //(to use next numeric gateway number (eg. use gw2 rather than gw1 now))
@@ -202,6 +220,26 @@ xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
                 $gwId++;
             }
         }
+    }
+
+    private function CreateThreeSecureAuthenticationXml($paRes, $md)
+    {
+        return '<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+<soap:Body>
+<ThreeDSecureAuthentication xmlns="https://www.thepaymentgateway.net/">
+<ThreeDSecureMessage>
+<MerchantAuthentication MerchantID="'. $this->merchantId .'" Password="'. $this->password .'" />
+<ThreeDSecureInputData CrossReference="'. $md .'">
+<PaRES>'. $paRes .'</PaRES>
+</ThreeDSecureInputData>
+<PassOutData>Some data to be passed out</PassOutData>
+</ThreeDSecureMessage>
+</ThreeDSecureAuthentication>
+</soap:Body>
+</soap:Envelope>';
     }
 }
 

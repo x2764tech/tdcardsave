@@ -97,7 +97,16 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
             case of successful payment.', 'above', true);
         }
     }
-    
+
+    public function register_access_points()
+    {
+        return array(
+            'ls_tdcardsave_authenticate_3d'=>'authenticate_3d',
+            'ls_tdcardsave_redirect_3d'=>'redirect_3d'
+        );
+    }
+
+
     /**
      * Defines the types of payments
      * 
@@ -222,7 +231,8 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
         unset($fields['CV2']);
         if(isset($fields['IssueNumber']))
             unset($fields['IssueNumber']);
-        $fields['CardNumber'] = '...'.substr($fields['CardNumber'], -4);
+        if(isset($fields['CardNumber']))
+            $fields['CardNumber'] = '...'.substr($fields['CardNumber'], -4);
  
         return $fields;
     }
@@ -248,11 +258,7 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
      */
     public function process_payment_form($data, $host_obj, $order, $back_end = false)
     {
-
-        $response_data = array();
-
-        try
-        {
+        try {
             $validation = self::_createValidation();
             /*
             * Prepare and send request to the payment gateway, and parse the server response
@@ -262,9 +268,6 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                 $validation->throwException();
             }
 
-
-
-            traceLog("Processing payment for ".$validation->fieldValues['CardName'] );
 
             require_once(PATH_APP . '/modules/tdcardsave/classes/XmlPaymentGateway/TDCardSave/PaymentProcessor.php');
 
@@ -308,17 +311,69 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
 
 
             $payment_result = $processor->processPayment();
+        } catch(Exception $ex) {
+            if (!$back_end)
+                throw new Phpr_ApplicationException('Payment Declined');
+            else
+                throw new Phpr_ApplicationException('Error: '.$ex->getMessage().' on line: '.$ex->getLine());
+        }
 
-            traceLog("Payment Transaction XML Request was ".$processor->requestXml);
+        $this->_processPaymentResult($data, $host_obj, $order, $back_end, $payment_result);
+    }
 
+    public function redirect_3d($params)
+    {
+        die(include(PATH_APP.'/modules/tdcardsave/3d_form.htm'));
+    }
+
+    public function authenticate_3d($params)
+    {
+        $is_backend = array_key_exists(1, $params) ? $params[1] === 'backend' : false;
+
+        $order = null;
+
+        $order_hash = array_key_exists(0, $params) ? $params[0] : null;
+        if (!$order_hash)
+            throw new Phpr_ApplicationException('Order not found');
+
+        $order = Shop_Order::create()->find_by_order_hash($order_hash);
+
+        if (!$order)
+            throw new Phpr_ApplicationException('Order not found.');
+
+        if (!$order->payment_method)
+            throw new Phpr_ApplicationException('Payment method not found.');
+
+        $order->payment_method->define_form_fields();
+
+        $host_obj = $order->payment_method;
+
+        $payment_method_obj = $host_obj->get_paymenttype_object();
+
+        if (!($payment_method_obj instanceof Tdcardsave_Cardsave_Payment))
+            throw new Phpr_ApplicationException('Invalid payment method.');
+
+        require_once(PATH_APP . '/modules/tdcardsave/classes/XmlPaymentGateway/TDCardSave/PaymentProcessor.php');
+
+        $processor = new PaymentProcessor($host_obj->merchantId, $host_obj->password);
+
+        $pa_res = post('PaRes');
+        $cross_reference = post('MD');
+        $payment_result = $processor->process3DSecureResult( $pa_res, $cross_reference);
+
+        $this->_processPaymentResult(array( "Cross Reference" => $cross_reference, "PaRes" => $pa_res  ), $host_obj, $order, $is_backend, $payment_result);
+    }
+
+    protected function _processPaymentResult($data, $host_obj, $order, $back_end, $payment_result)
+    {
+        $response_data = array();
+        try {
             $response_data = array();
             $response_data['Auth Code'] = $payment_result->getAuthCode();
             $response_data['Address Numeric Check Result'] = $payment_result->addressNumericCheckResult;
-            $response_data['Postcode Check Result'] =  $payment_result->postCodeCheckResult;
+            $response_data['Postcode Check Result'] = $payment_result->postCodeCheckResult;
             $response_data['CV2 Result'] = $payment_result->cv2CheckResult;
             $response_data['3D Secure Result'] = $payment_result->threeDSecureAuthenticationCheckResult;
-
-            traceLog("Payment Transaction result for ".$validation->fieldValues['CardName']." was ".$payment_result->xmlString);
 
             if (!isset($payment_result) || $payment_result == null) {
                 throw new Exception('Unable to communicate with payment gateway');
@@ -326,9 +381,7 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                 $response_message = $payment_result->message;
                 $response_code = $payment_result->statusCode;
 
-                traceLog("Payment result for ".$validation->fieldValues['CardName']." was $response_code $response_message");
-
-                if($payment_result->paymentWasSuccessful()) {
+                if ($payment_result->paymentWasSuccessful()) {
                     $this->log_payment_attempt(
                         $order,
                         'Successful payment',
@@ -342,20 +395,35 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                     );
 
                     /* Update order status */
-                    Shop_OrderStatusLog::create_record($host_obj->order_status,
-                        $order
-                    );
+                    Shop_OrderStatusLog::create_record($host_obj->order_status,$order);
 
                     /* Mark as processed */
                     $order->set_payment_processed();
+
+
                 } elseif ($payment_result->requires3DSecure()) {
-                    throw new Exception('Credit Card requires 3D secure but it has not been implemented');
+
+                    $authentication_url = root_url('/ls_tdcardsave_authenticate_3d/' . $order->order_hash . ($back_end ? '/backend' : ''), true);
+                    $data = array(
+                        "ACSURL" => $payment_result->getAcsUrl(),
+                        "PAReq" => $payment_result->getPaqReq(),
+                        "MD" => $payment_result->crossReference,
+                        "TermUrl" => $authentication_url);
+
+                    $encoded = array();
+                    foreach ($data as $key => $value)
+                        $encoded[] = $key . "=" . urlencode($value);
+
+                    $params = implode("&", $encoded);
+
+                    Phpr::$response->redirect(root_url('ls_tdcardsave_redirect_3d/?' . $params));
+
                 } elseif ($payment_result->transactionReferred()) {
                     throw new Exception('Transaction referred');
                 } elseif ($payment_result->paymentDeclined()) {
                     throw new Exception("Credit card payment declined: $response_message");
-                } elseif($payment_result->isDuplicate()) {
-                    if($payment_result->previousTransactionWasSuccess()) {
+                } elseif ($payment_result->isDuplicate()) {
+                    if ($payment_result->previousTransactionWasSuccess()) {
                         $this->log_payment_attempt(
                             $order,
                             'Successful (Duplicate) payment',
@@ -366,29 +434,27 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                         );
 
                         /* Update order status */
-                        Shop_OrderStatusLog::create_record($host_obj->order_status,$order);
+                        Shop_OrderStatusLog::create_record($host_obj->order_status, $order);
 
                         /* Mark as processed */
                         $order->set_payment_processed();
                     } else {
-                        throw new Exception("Duplicate Transaction was not successful - ".$payment_result->previousTransactionMessage);
+                        throw new Exception("Duplicate Transaction was not successful - " . $payment_result->previousTransactionMessage);
                     }
                 } else {
                     throw new Exception("Unknown Error processing transaction");
                 }
             }
 
-        }
-        catch (Exception $ex)
-        {
+        } catch (Exception $ex) {
             /*
             * Log invalid payment attempt
             */
-            $data = $data ?: array();
-            $response_data = $response_data ?: array();
+            $data = $data ? : array();
+            $response_data = $response_data ? : array();
             $response_text = isset($payment_result) ? $payment_result->xmlString : null;
 
-            
+
             $this->log_payment_attempt(
                 $order,
                 $ex->getMessage(),
@@ -397,11 +463,23 @@ class Tdcardsave_Cardsave_Payment extends Shop_PaymentType
                 $this->prepare_response_log($response_data),
                 $response_text
             );
-            
+
             if (!$back_end)
                 throw new Phpr_ApplicationException('Payment Declined');
             else
-                throw new Phpr_ApplicationException('Error: '.$ex->getMessage().' on line: '.$ex->getLine());
+                throw new Phpr_ApplicationException('Error: ' . $ex->getMessage() . ' on line: ' . $ex->getLine());
+        }
+
+        if (!$back_end)
+        {
+            $return_page = $order->payment_method->receipt_page;
+            if ($return_page)
+                Phpr::$response->redirect(root_url($return_page->url.'/'.$order->order_hash).'?utm_nooverride=1');
+            else
+                throw new Phpr_ApplicationException('SagePay Direct Receipt page is not found.');
+        } else
+        {
+            Phpr::$response->redirect(url('/shop/orders/payment_accepted/'.$order->id.'?utm_nooverride=1&nocache'.uniqid()));
         }
     }
 }
